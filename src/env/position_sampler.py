@@ -4,55 +4,68 @@ from stockfish import Stockfish
 import platform
 import os
 
-# the stockfish thats installed with pip is just a wrapper, so we need hada stockfish.exe 
-# that i downloaded from the official sotckfish website and stored in "bin" folder in the main project's folder
 def get_stockfish_path():
-    # 1) If running in Colab, install via apt and use the system binary
     try:
         if "google.colab" in str(get_ipython()):
             return "/usr/games/stockfish"
     except NameError:
-        pass  # get_ipython() not defined → we're not in Colab/IPython
+        pass
 
-    # 2) Otherwise, assume local
     proj = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     exe = "stockfish.exe" if platform.system() == "Windows" else "stockfish"
     return os.path.join(proj, "bin", exe)
-
-stockfish = Stockfish(path=get_stockfish_path(), depth=12)
+#depth 8 reduced 3la jal time gain, and skill level 10 to get better moves than random moves
+stockfish = Stockfish(path=get_stockfish_path(), depth=8)  
 stockfish.set_skill_level(10)
-#nconfirmiw bli neither side is more than 1 pawn ahead 
-# aka returns true idha stock fish evaluation egale +/-100 score
-def is_fair_position(fen, cp_threshold=100):
+
+def is_fair_position(fen, cp_threshold=150):
     stockfish.set_fen_position(fen)
     eval_info = stockfish.get_evaluation()
-    
     if eval_info['type'] == 'cp': 
-        cp = eval_info['value']
-        return abs(cp) <= cp_threshold
-    return False  
+        return abs(eval_info['value']) <= cp_threshold
+    return False
 
-def get_balanced_random_position(min_pieces=5, max_pieces=6, max_tries=100):
-    for _ in range(max_tries):
+def get_balanced_random_position(min_pieces=4, max_pieces=6, max_tries=100):
+    for trial in range(max_tries):
         board = chess.Board()
+        move_count = 0
 
-        # play random moves until piece count target is met
-        while True:
+        for _ in range(150): 
             if board.is_game_over():
                 break
 
-            white_pieces = sum(1 for p in board.piece_map().values() if p.color == chess.WHITE)
-            black_pieces = sum(1 for p in board.piece_map().values() if p.color == chess.BLACK)
-            
-            if (min_pieces <= white_pieces <= max_pieces) and (min_pieces <= black_pieces <= max_pieces):
+            stockfish.set_fen_position(board.fen())
+            moves = stockfish.get_top_moves(5)
+            if not moves:
                 break
 
-            move = random.choice(list(board.legal_moves))
+            candidate_moves = moves[:3] if len(moves) >= 3 else moves
+            move_info = random.choice(candidate_moves)
+            move_str = move_info['Move']
+            move = chess.Move.from_uci(move_str)
+
+            if move not in board.legal_moves:
+                break
+
             board.push(move)
+            move_count += 1
 
-        # check if the position is fair
-        fen = board.fen()
-        if is_fair_position(fen):
-            return fen
+            white_pieces = sum(1 for p in board.piece_map().values()
+                               if p.color == chess.WHITE and p.piece_type != chess.KING)
+            black_pieces = sum(1 for p in board.piece_map().values()
+                               if p.color == chess.BLACK and p.piece_type != chess.KING)
 
-    raise RuntimeError("Failed to generate a balanced position after many tries.")
+            if (min_pieces <= white_pieces <= max_pieces) and (min_pieces <= black_pieces <= max_pieces):
+                fen = board.fen()
+                if is_fair_position(fen):
+                    print(f"fair position on trial {trial} after {move_count} moves: {white_pieces}W, {black_pieces}B")
+                    return fen
+
+        print(f"[trial {trial}] no fair position found")
+
+    raise RuntimeError("failed to generate a balanced fair position")
+
+if __name__ == "__main__":
+    print("sampling balanced position")
+    fen = get_balanced_random_position()
+    print("final FEN:", fen)
